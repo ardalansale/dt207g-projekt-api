@@ -1,79 +1,136 @@
-// Importera nödvändiga paket
 const express = require('express');
+const { Pool } = require('pg');
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
 const cors = require('cors');
 
 const app = express();
+const port = process.env.PORT || 3000;
+const secretKey = process.env.JWT_SECRET;
+
+// Middleware
 app.use(express.json());
 app.use(cors());
 
-// Hemlig nyckel för JWT (obs. lägg in i .env)
-const JWT_SECRET = 'min_hemliga_nyckel_123';
+// Anslutning till Neon (PostgreSQL)
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false // Krävs för att ansluta säkert till NEON
+    }
+});
 
-// Förenklad "databas" i minnet för att hålla koden enkel och lätt att köra igång
-let users = []; // Här lagras registrerade användare
-let menuItems = [
-    { id: 1, title: 'Pizza Margherita', description: 'Tomatsås, mozzarella, basilika', price: 110 },
-    { id: 2, title: 'Pizza Vesuvio', description: 'Tomatsås, mozzarella, skinka', price: 120 }
-];
+// Skapa tabeller för användare och meny om de inte finns
+async function initDb() {
+    try {
+        await pool.query(`CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE,
+            password TEXT
+        )`);
 
+        await pool.query(`CREATE TABLE IF NOT EXISTS menu_items (
+            id SERIAL PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT,
+            price NUMERIC NOT NULL
+        )`);
 
-// PubliC Routes (Ingen inloggning krävs)
+        console.log('Ansluten till Neon-databasen och tabeller kontrollerade!');
+    } catch (err) {
+        console.log('Kunde inte ansluta till databasen:', err.message);
+    }
+}
+initDb();
+
+// ==========================================
+// PUBLIKA ROUTES
+// ==========================================
 
 // 1. Hämta alla menyartiklar (används av den publika webbplatsen)
-app.get('/api/menu', (req, res) => {
-    res.json(menuItems);
-});
-
-// 2. Registrera en ny användare (admin)
-app.post('/api/register', async (req, res) => {
+app.get('/api/menu', async (req, res) => {
     try {
-        const { email, password, name } = req.body;
-        
-        // Hasha lösenordet av säkerhetsskäl
-        const hashedPassword = await bcrypt.hash(password, 10);
-        
-        users.push({ email, password: hashedPassword, name });
-        res.status(201).json({ message: 'Användare skapad framgångsrikt!' });
+        const result = await pool.query('SELECT * FROM menu_items ORDER BY id ASC');
+        res.json(result.rows);
     } catch (err) {
-        res.status(500).json({ error: 'Ett fel uppstod vid registrering.' });
+        res.status(500).json({ error: 'Kunde inte hämta menyn.' });
     }
 });
 
-// 3. Logga in och få en JWT-token
+// 2. Registrera ny användare
+app.post('/api/register', async (req, res) => {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Du måste fylla i både användarnamn och lösenord!' });
+    }
+
+    try {
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+        await pool.query(
+            `INSERT INTO users (username, password) VALUES ($1, $2)`,
+            [username, hashedPassword]
+        );
+
+        res.status(201).json({ message: 'Kontot är skapat!' });
+    } catch (err) {
+        if (err.code === '23505') {
+            return res.status(400).json({ error: 'Användarnamnet är redan upptaget.' });
+        }
+        res.status(500).json({ error: 'Ett serverfel uppstod.' });
+    }
+});
+
+// 3. Logga in
 app.post('/api/login', async (req, res) => {
-    const { email, password } = req.body;
-    const user = users.find(u => u.email === email);
+    const { username, password } = req.body;
 
-    if (!user) {
-        return res.status(400).json({ error: 'Felaktig e-post eller lösenord.' });
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Fyll i användarnamn och lösenord.' });
     }
 
-    // Jämför lösenordet
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
-        return res.status(400).json({ error: 'Felaktig e-post eller lösenord.' });
-    }
+    try {
+        const result = await pool.query(`SELECT * FROM users WHERE username = $1`, [username]);
+        const user = result.rows[0];
 
-    // Skapa en JWT-token som gäller i 1 timme
-    const token = jwt.sign({ email: user.email }, JWT_SECRET, { expiresIn: '1h' });
-    res.json({ message: 'Inloggning lyckades!', token });
+        if (!user) {
+            return res.status(401).json({ error: 'Felaktigt användarnamn eller lösenord.' });
+        }
+
+        const passwordMatch = await bcrypt.compare(password, user.password);
+        if (!passwordMatch) {
+            return res.status(401).json({ error: 'Felaktigt användarnamn eller lösenord.' });
+        }
+
+        const token = jwt.sign(
+            { id: user.id, username: user.username }, 
+            secretKey, 
+            { expiresIn: '1h' }
+        );
+
+        res.json({
+            message: 'Inloggning lyckades!',
+            token: token
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Ett serverfel uppstod vid inloggning.' });
+    }
 });
 
+// SKYDDADE ROUTES (Kräver JWT)
 
-// Protected Routes (Kräver giltig JWT-token)
-
-// Middleware för att kontrollera JWT-token
+// Hjälpfunktion för att kolla om JWT-token är giltig
 function verifyToken(req, res, next) {
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // "Bearer TOKEN"
+    const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) {
-        return res.status(401).json({ error: 'Åtkomst nekad. Ingen token medföljer.' });
+        return res.status(401).json({ error: 'Ingen token medföljer. Åtkomst nekad!' });
     }
 
-    jwt.verify(token, JWT_SECRET, (err, user) => {
+    jwt.verify(token, secretKey, (err, user) => {
         if (err) {
             return res.status(403).json({ error: 'Ogiltig eller utgången token.' });
         }
@@ -82,40 +139,42 @@ function verifyToken(req, res, next) {
     });
 }
 
-// 4. Lägg till en ny rätt i menyn (Skyddad route)
-app.post('/api/menu', verifyToken, (req, res) => {
+// 4. Lägg till ny rätt i menyn (Skyddad)
+app.post('/api/menu', verifyToken, async (req, res) => {
     const { title, description, price } = req.body;
 
     if (!title || !price) {
         return res.status(400).json({ error: 'Titel och pris är obligatoriska.' });
     }
 
-    const newItem = {
-        id: menuItems.length + 1,
-        title,
-        description,
-        price: Number(price)
-    };
-
-    menuItems.push(newItem);
-    res.status(201).json({ message: 'Rätt tillagd!', item: newItem });
-});
-
-// 5. Radera en rätt från menyn (Skyddad route)
-app.delete('/api/menu/:id', verifyToken, (req, res) => {
-    const id = parseInt(req.params.id);
-    const index = menuItems.findIndex(item => item.id === id);
-
-    if (index === -1) {
-        return res.status(404).json({ error: 'Rätten hittades inte.' });
+    try {
+        const result = await pool.query(
+            `INSERT INTO menu_items (title, description, price) VALUES ($1, $2, $3) RETURNING *`,
+            [title, description, price]
+        );
+        res.status(201).json({ message: 'Rätt tillagd i menyn!', item: result.rows[0] });
+    } catch (err) {
+        res.status(500).json({ error: 'Kunde inte lägga till rätten.' });
     }
-
-    menuItems.splice(index, 1);
-    res.json({ message: 'Rätt raderad!' });
 });
 
-// Starta servern
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Servern körs på port ${PORT}`);
+// 5. Radera rätt från menyn (Skyddad)
+app.delete('/api/menu/:id', verifyToken, async (req, res) => {
+    const id = parseInt(req.params.id);
+
+    try {
+        const result = await pool.query(`DELETE FROM menu_items WHERE id = $1 RETURNING *`, [id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Rätten hittades inte.' });
+        }
+
+        res.json({ message: 'Rätten har raderats!' });
+    } catch (err) {
+        res.status(500).json({ error: 'Kunde inte radera rätten.' });
+    }
+});
+
+app.listen(port, () => {
+    console.log(`Server is running on port ${port}`);
 });
