@@ -43,9 +43,7 @@ async function initDb() {
 }
 initDb();
 
-// ==========================================
 // PUBLIKA ROUTES
-// ==========================================
 
 // 1. Hämta alla menyartiklar (används av den publika webbplatsen)
 app.get('/api/menu', async (req, res) => {
@@ -177,4 +175,29 @@ app.delete('/api/menu/:id', verifyToken, async (req, res) => {
 
 app.listen(port, () => {
     console.log(`Server is running on port ${port}`);
+});
+
+// 6. Uppdatera rätt i menyn (Skyddad)
+app.put('/api/menu/:id', verifyToken, async (req, res) => {
+    const id = parseInt(req.params.id);
+    const { title, description, price } = req.body;
+
+    if (!title || !price) {
+        return res.status(400).json({ error: 'Titel och pris är obligatoriska.' });
+    }
+
+    try {
+        const result = await pool.query(
+            `UPDATE menu_items SET title = $1, description = $2, price = $3 WHERE id = $4 RETURNING *`,
+            [title, description, price, id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Rätten hittades inte.' });
+        }
+
+        res.json({ message: 'Rätten har uppdaterats!', item: result.rows[0] });
+    } catch (err) {
+        res.status(500).json({ error: 'Kunde inte uppdatera rätten.' });
+    }
 });
