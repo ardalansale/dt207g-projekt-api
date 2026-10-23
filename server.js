@@ -18,7 +18,7 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
-// Initiera databas och förskapat admin-konto med miljövariabel
+// Initiera databas och förskapat admin-konto med miljövariabel (render)
 async function initDb() {
     try {
         await pool.query(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT)`);
@@ -35,7 +35,7 @@ async function initDb() {
 }
 initDb();
 
-// --- PUBLIKA ROUTES ---
+// --- Publika Routes ---
 
 app.get('/api/menu', async (req, res) => {
     try {
@@ -81,7 +81,7 @@ app.post('/api/bookings', async (req, res) => {
 });
 
 
-// --- AUTH MIDDLEWARE ---
+// --- AUTH Middleware ---
 
 function verifyToken(req, res, next) {
     const token = req.headers['authorization']?.split(' ')[1];
@@ -95,7 +95,7 @@ function verifyToken(req, res, next) {
 }
 
 
-// --- SKYDDADE ROUTES (Admin Menu CRUD) ---
+// --- Skyddade Routes (Admin Meny CRUD) ---
 
 app.post('/api/menu', verifyToken, async (req, res) => {
     const { title, description, price } = req.body;
@@ -137,6 +137,29 @@ app.delete('/api/menu/:id', verifyToken, async (req, res) => {
         res.json({ message: 'Rätten har raderats!' });
     } catch {
         res.status(500).json({ error: 'Kunde inte radera rätten.' });
+    }
+});
+
+
+// --- Skyddade Routes (Admin Bookings) ---
+
+app.get('/api/bookings', verifyToken, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM bookings ORDER BY id DESC');
+        res.json(result.rows);
+    } catch {
+        res.status(500).json({ error: 'Kunde inte hämta bokningar.' });
+    }
+});
+
+app.delete('/api/bookings/:id', verifyToken, async (req, res) => {
+    const id = parseInt(req.params.id);
+    try {
+        const result = await pool.query('DELETE FROM bookings WHERE id = $1 RETURNING *', [id]);
+        if (!result.rows.length) return res.status(404).json({ error: 'Bokningen hittades inte.' });
+        res.json({ message: 'Bokningen raderades!' });
+    } catch {
+        res.status(500).json({ error: 'Kunde inte radera bokningen.' });
     }
 });
 
