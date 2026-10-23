@@ -23,11 +23,16 @@ async function initDb() {
     try {
         await pool.query(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT)`);
         await pool.query(`CREATE TABLE IF NOT EXISTS menu_items (id SERIAL PRIMARY KEY, title TEXT NOT NULL, description TEXT, price NUMERIC NOT NULL)`);
-        await pool.query(`CREATE TABLE IF NOT EXISTS bookings (id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT NOT NULL, date TEXT NOT NULL, time TEXT NOT NULL, guests INT NOT NULL, message TEXT)`);
+        await pool.query(`CREATE TABLE IF NOT EXISTS bookings (id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT NOT NULL, date TEXT NOS NULL, time TEXT NOT NULL, guests INT NOT NULL, message TEXT)`);
 
-        const adminPass = process.env.ADMIN_PASSWORD || 'Juve1987!';
+        const adminUser = process.env.ADMIN_USER || 'admin';
+        const adminPass = process.env.ADMIN_PASSWORD || 'SvartVitt1';
         const hashedPassword = await bcrypt.hash(adminPass, 10);
-        await pool.query(`INSERT INTO users (username, password) VALUES ('admin', $1) ON CONFLICT (username) DO NOTHING`, [hashedPassword]);
+        
+        await pool.query(
+            `INSERT INTO users (username, password) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING`, 
+            [adminUser, hashedPassword]
+        );
         console.log('DB connected.');
     } catch (err) {
         console.log('DB error:', err.message);
