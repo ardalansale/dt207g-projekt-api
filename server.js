@@ -23,7 +23,7 @@ async function initDb() {
     try {
         await pool.query(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT)`);
         await pool.query(`CREATE TABLE IF NOT EXISTS menu_items (id SERIAL PRIMARY KEY, title TEXT NOT NULL, description TEXT, price NUMERIC NOT NULL)`);
-        await pool.query(`CREATE TABLE IF NOT EXISTS bookings (id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT NOT NULL, date TEXT NOS NULL, time TEXT NOT NULL, guests INT NOT NULL, message TEXT)`);
+        await pool.query(`CREATE TABLE IF NOT EXISTS bookings (id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL, phone TEXT NOT NULL, date TEXT NOT NULL, time TEXT NOT NULL, guests INT NOT NULL, message TEXT)`);
 
         const adminUser = process.env.ADMIN_USER || 'admin';
         const adminPass = process.env.ADMIN_PASSWORD || 'SvartVitt1';
